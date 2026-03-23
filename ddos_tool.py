@@ -44,30 +44,35 @@ def update_and_run():
         if os.path.exists(VERIFICATION_FILE):
             shutil.copy(VERIFICATION_FILE, temp_dir)
 
-        # Install required Python modules globally (or user site)
+        # Install required Python modules
         print("[+] Installing required Python modules...")
         required_packages = ["rich", "requests", "colorama", "beautifulsoup4", "python-telegram-bot"]
-        # Use pip install with --upgrade to ensure latest
-        cmd = [sys.executable, "-m", "pip", "install", "--upgrade"] + required_packages
-        # Run with capture_output=False to see output (helpful for debugging)
-        result = subprocess.run(cmd, capture_output=False, text=True)
+        # Use pip with --upgrade
+        pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade"] + required_packages
+        print(f"[DEBUG] Running: {' '.join(pip_cmd)}")
+        result = subprocess.run(pip_cmd, capture_output=False, text=True)
         if result.returncode != 0:
-            print("[!] Failed to install dependencies. Please install them manually:")
-            print("    pip install rich requests colorama beautifulsoup4 python-telegram-bot")
-            sys.exit(1)
+            print("[!] pip install failed. Trying with --user...")
+            pip_cmd_user = [sys.executable, "-m", "pip", "install", "--upgrade", "--user"] + required_packages
+            result = subprocess.run(pip_cmd_user, capture_output=False, text=True)
+            if result.returncode != 0:
+                print("[!] Still failed. Please install manually:")
+                print("    pip install rich requests colorama beautifulsoup4 python-telegram-bot")
+                sys.exit(1)
 
-        # Verify rich is importable
+        # Verify rich is importable using the same Python interpreter
+        print("[+] Verifying rich installation...")
+        check_cmd = [sys.executable, "-c", "import rich; print('OK')"]
         try:
-            subprocess.run([sys.executable, "-c", "import rich"], check=True, capture_output=True)
+            subprocess.run(check_cmd, check=True, capture_output=True)
         except subprocess.CalledProcessError:
-            print("[!] rich still not available after installation. Please install manually.")
+            print("[!] rich still not importable. Exiting.")
             sys.exit(1)
 
         # Run the new script with the updated flag
         print("[+] Starting the latest version...")
         env = os.environ.copy()
         env["DDOS_UPDATED"] = "1"
-        # Run in the same directory as the original script (or any)
         subprocess.run([sys.executable, new_script] + sys.argv[1:], env=env)
         sys.exit(0)
     except Exception as e:
