@@ -14,7 +14,7 @@ import string
 import threading
 import subprocess
 import shutil
-import tempfile
+import webbrowser
 from pathlib import Path
 
 try:
@@ -31,12 +31,13 @@ init(autoreset=True)
 # ========== Configuration ==========
 BOT_TOKEN = "8701118041:AAHGu4HHxAaSYE0GFIxgbnQKBKmw5VJBJMY"
 GROUP_ID = "-1003792290807"
-GITHUB_REPO = "https://github.com/xhacknet/XDDos_v1.git"
+RAW_SCRIPT_URL = "https://raw.githubusercontent.com/xhacknet/XDDos_v1/refs/heads/main/xddos.py"
 PAID_LINK = "https://www.nxalimrans.site"
 TOOL_LINK = "https://xddosv1.com"
+TELEGRAM_GROUP_LINK = "https://t.me/XHackNet_Group"
 
 VERIFY_FILE = Path.home() / ".xddos_verified"
-UPDATE_FLAG = Path("/tmp/xddos_update_done")  # avoid update loop
+UPDATE_FLAG = Path.home() / ".xddos_updating"  # avoid update loop
 
 # ========== Helper Functions ==========
 def print_banner():
@@ -48,36 +49,47 @@ def print_banner():
     """ + Style.RESET_ALL)
 
 def update_self():
-    """Auto-update: clone/pull latest from GitHub, then restart."""
+    """Auto-update: download latest script from GitHub and restart."""
     if UPDATE_FLAG.exists():
-        # already updated in this run, skip to avoid loop
+        # Already updating, skip to avoid loop
         return
-
-    script_dir = Path(__file__).parent.resolve()
-    repo_dir = script_dir / "XDDos_v1"
 
     print(Fore.YELLOW + "[*] Checking for updates...")
 
     try:
-        # If repo dir exists, pull; otherwise clone
-        if repo_dir.exists():
-            subprocess.run(["git", "-C", str(repo_dir), "pull"], check=True, capture_output=True)
-        else:
-            subprocess.run(["git", "clone", GITHUB_REPO, str(repo_dir)], check=True, capture_output=True)
-
-        # Copy the new script into the current directory (overwrites old)
-        new_script = repo_dir / "xddos.py"
-        current_script = Path(__file__).resolve()
-        if new_script.exists() and new_script != current_script:
-            shutil.copy2(new_script, current_script)
-
-        # Mark update done and restart
+        # Create flag to prevent loop
         UPDATE_FLAG.touch()
+
+        # Download the latest script
+        response = requests.get(RAW_SCRIPT_URL, timeout=10)
+        response.raise_for_status()
+        new_script = response.text
+
+        # Get current script path
+        current_script = Path(__file__).resolve()
+
+        # Write new script to a temporary file first
+        temp_script = current_script.with_suffix(".tmp")
+        temp_script.write_text(new_script)
+
+        # Replace current script with new one
+        shutil.move(str(temp_script), str(current_script))
+
+        # Make it executable (Unix-like)
+        if os.name != 'nt':
+            os.chmod(current_script, 0o755)
+
         print(Fore.GREEN + "[✓] Updated successfully. Restarting...")
+        # Restart the new script
         os.execv(sys.executable, [sys.executable] + sys.argv)
+
     except Exception as e:
         print(Fore.RED + f"[!] Update failed: {e}")
         print(Fore.YELLOW + "[*] Continuing with current version...")
+    finally:
+        # Remove flag (if we are not restarting)
+        if UPDATE_FLAG.exists():
+            UPDATE_FLAG.unlink()
 
 def send_telegram_message(text):
     """Send message to the group using the bot."""
@@ -97,7 +109,8 @@ def verify_user():
         return True
 
     print(Fore.YELLOW + "\n[!] First time use requires verification.")
-    print(Fore.CYAN + f"[*] Please join: https://t.me/XHackNet_Group")
+    print(Fore.CYAN + f"[*] Opening Telegram group: {TELEGRAM_GROUP_LINK}")
+    webbrowser.open(TELEGRAM_GROUP_LINK)
     input(Fore.CYAN + "[*] Press Enter after joining the group...")
 
     # Generate and send OTP
@@ -204,8 +217,7 @@ def free_version():
 
 def paid_version():
     print(Fore.YELLOW + "\n[*] Redirecting to paid version...")
-    webbrowser.open(PAID_LINK)  # if webbrowser is available
-    # If webbrowser not available, just print link
+    webbrowser.open(PAID_LINK)
     print(Fore.CYAN + f"Visit: {PAID_LINK}")
 
 def main():
