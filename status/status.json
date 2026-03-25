@@ -1,1 +1,10 @@
 
+{
+  "status": "on",
+  "message": "Tool is active. Enjoy!",
+  "off_message": "The tool is currently disabled. Please join our groups for updates.",
+  "groups": {
+    "telegram": "https://t.me/XHackNet_Group",
+    "website": "https://xddosv1.com"
+  }
+}
